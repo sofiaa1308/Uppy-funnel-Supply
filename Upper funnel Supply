@@ -1,0 +1,208 @@
+with base_regs as(
+with regs_peru as 
+	(with parent as (
+		select
+		'Peru' as pais,
+		'PE' as pais_corto,
+		quo.quo_source_quote_id as lead_id,
+		quo.quo_id as id_cotizador,
+		date(quo.quo_reg_date) as fecha_registro,
+		quo.quo_reg_date as fecha_hora_registro,
+		qs.qso_desc as origen_registro,
+		quo.quo_user_info::json->>'email' as cliente_email,
+		quo.quo_user_info::json->>'phone' as cliente_telefono,
+		quo.quo_user_info::json->>'name' as cliente_nombre,
+		quo.quo_input::json->>'sku' as sku,
+		quo.quo_km as km,
+		case
+		                when qof.qof_sgt_id=1 then 'bestseller'
+		                when qof.qof_sgt_id=2 then 'no_wishlist'
+		                when qof.qof_sgt_id=3 then 'wishlist_1'
+		                when qof.qof_sgt_id=4 then 'wishlist_2'
+		                when qof.qof_sgt_id=5 then 'wishlist_3'
+		                when qof.qof_sgt_id=6 then 'wishlist_4'
+		        end as parent_segmento,
+		qst.qst_desc as parent_status_oferta,
+		qod.qod_market_price as parent_precio_mercado,
+		case when qad.qad_factor is null then 1 else qad.qad_factor end as parent_factor_ajuste_km,
+		round((case when qad.qad_factor is null then 1 else qad.qad_factor end)*qod_market_price,0) as parent_precio_mercado_ajustado,
+		qua.qua_ins_amount as parent_oferta_instantanea,
+		qua.qua_trd_amount as parent_oferta_tradein,
+		err.qer_desc as parent_razon_no_cotizado,
+		rul.smk_name as regla_ganadora_algoritmo,
+		case when qt.qty_desc='Regular' then 'Automatica' else 'Manual' end as tipo_cotizacion
+		FROM analytics_pe.aly_tbl_quote as quo
+		left join analytics_pe.aly_tbl_quote_offer as qof on qof.qof_quo_id = quo.quo_id
+		left join analytics_pe.aly_tbl_quote_detail as qod on qod.qod_quo_id = quo.quo_id
+		left join analytics_pe.aly_tbl_quote_adjustment as qad on qad.qad_quo_id = quo.quo_id and qad.qad_oft_id = 5 and qad.qad_adj_id=1
+		left join analytics_pe.aly_tbl_quote_amount as qua on qua.qua_quo_id = quo.quo_id and qua_cur_id = 1 --> corregir moneda por pais (7 = colombia / 8 = chile)
+		left join algorithm.alg_tbl_sub_market as rul on rul.smk_id = qod.qod_winner_smk_id
+		left join quote_config.qcf_tbl_quote_error_catalog as err on err.qer_id = quo.quo_qer_id
+		left join quote_config.qcf_tbl_quote_type as qt on qt.qty_id = quo.quo_qty_id
+		left join quote_config.qcf_tbl_quote_source as qs on qs.qso_id = quo.quo_qso_id
+		left join quote_config.qcf_tbl_quote_status as qst on qst.qst_id = quo.quo_qst_id 
+		where quo_reg_date::date >= '2022-01-01'
+		and qs.qso_desc='Olimpo'
+		order by quo_reg_date desc),
+	
+	child as (
+		select *
+		from
+			(select
+			'Peru' as pais,
+			quo.quo_id as child_id_cotizador,
+			quo.quo_parent_id as parent_id_cotizador,
+			qs.qso_desc as child_origen_registro,
+			date(quo.quo_reg_date) as child_fecha_registro,
+			quo.quo_reg_date as child_fecha_hora_registro,
+			quo.quo_user_info::json->>'email' as cotizado_por,
+			quo.quo_input::json->>'sku' as child_sku,
+			quo.quo_km as km,
+			case
+			                when qof.qof_sgt_id=1 then 'bestseller'
+			                when qof.qof_sgt_id=2 then 'no_wishlist'
+			                when qof.qof_sgt_id=3 then 'wishlist_1'
+			                when qof.qof_sgt_id=4 then 'wishlist_2'
+			                when qof.qof_sgt_id=5 then 'wishlist_3'
+			                when qof.qof_sgt_id=6 then 'wishlist_4'
+			        end as child_segmento,
+			qst.qst_desc as child_status_oferta,
+			qod.qod_market_price as child_precio_mercado,
+			case when qad.qad_factor is null then 1 else qad.qad_factor end as child_factor_ajuste_km,
+			round((case when qad.qad_factor is null then 1 else qad.qad_factor end)*qod_market_price,0) as child_precio_mercado_ajustado,
+			qua.qua_ins_amount as child_oferta_instantanea,
+			qua.qua_trd_amount as child_oferta_tradein,
+			quo.quo_input::json->'sourceParams'->>'comments' as child_razon_no_cotizado,
+			case when qt.qty_desc='Regular' then 'Automatica' else 'Manual' end as child_tipo_cotizacion,
+			RANK() over (partition by quo.quo_parent_id order by quo.quo_reg_date desc) as ranking
+			FROM analytics_pe.aly_tbl_quote as quo
+			left join analytics_pe.aly_tbl_quote_offer as qof on qof.qof_quo_id = quo.quo_id
+			left join analytics_pe.aly_tbl_quote_detail as qod on qod.qod_quo_id = quo.quo_id
+			left join analytics_pe.aly_tbl_quote_adjustment as qad on qad.qad_quo_id = quo.quo_id and qad.qad_oft_id = 5 and qad.qad_adj_id=1
+			left join analytics_pe.aly_tbl_quote_amount as qua on qua.qua_quo_id = quo.quo_id and qua_cur_id = 1 --> corregir moneda por pais (7 = colombia / 8 = chile)
+			left join algorithm.alg_tbl_sub_market as rul on rul.smk_id = qod.qod_winner_smk_id
+			left join quote_config.qcf_tbl_quote_error_catalog as err on err.qer_id = quo.quo_qer_id
+			left join quote_config.qcf_tbl_quote_type as qt on qt.qty_id = quo.quo_qty_id
+			left join quote_config.qcf_tbl_quote_source as qs on qs.qso_id = quo.quo_qso_id
+			left join quote_config.qcf_tbl_quote_status as qst on qst.qst_id = quo.quo_qst_id 
+			where quo_reg_date::date >= '2022-01-01'
+			and qs.qso_desc='Grand Prix'
+			order by quo_reg_date desc) as manuales
+		where ranking=1)
+		
+	select
+	parent.pais,
+	parent.pais_corto,
+	parent.lead_id::text,
+	parent.id_cotizador,
+	parent.fecha_registro,
+	parent.fecha_hora_registro,
+	parent.origen_registro,
+	parent.cliente_email,
+	parent.cliente_telefono,
+	parent.cliente_nombre,
+	parent.sku,
+	parent.km,
+	case when ranking=1 then 'Manual'
+		 when (case when ranking=1 then child_status_oferta else parent_status_oferta end) = 'pending offers' then 'Manual'
+		 else 'Automatica' 
+		 end as tipo_oferta,
+	case when ranking=1 then child_status_oferta else parent_status_oferta end as status_oferta,
+	case
+		when (case when ranking=1 then child_razon_no_cotizado else parent_razon_no_cotizado end) is not null
+		and (case when ranking=1 then 'Manual' else 'Automatica' end) = 'Automatica'
+		then 0
+		else 1
+		end as flag_successful_register,
+	case
+		when ((case when ranking=1 then child_razon_no_cotizado else parent_razon_no_cotizado end) is not null
+		and (case when ranking=1 then 'Manual' else 'Automatica' end) = 'Manual')
+		or ((case when ranking=1 then child_razon_no_cotizado else parent_razon_no_cotizado end) is null
+		and (case when ranking=1 then child_status_oferta else parent_status_oferta end)='invalid parameters')
+		then 1
+		else 0
+		end as flag_no_cotizable,
+	case 
+		when (case when ranking=1 then child_oferta_instantanea else parent_oferta_instantanea end) is not null
+		or ((case when ranking=1 then child_oferta_instantanea else parent_oferta_instantanea end) is null 
+		and child_status_oferta = 'with error')
+		then 1
+		else 0
+		end as flag_con_oferta,
+	case 
+		when parent_oferta_instantanea is not null
+		then 1
+		else 0
+		end as flag_autoquotation,
+	case when ranking=1 then child_razon_no_cotizado else parent_razon_no_cotizado end as razon_no_cotizado,
+	case when ranking=1 then child_segmento else parent_segmento end as segmento,
+	case when ranking=1 then child_precio_mercado else parent_precio_mercado end as precio_mercado,
+	case when ranking=1 then child_factor_ajuste_km else parent_factor_ajuste_km end as factor_ajuste_km,
+	case when ranking=1 then child_precio_mercado_ajustado else parent_precio_mercado_ajustado end as precio_mercado_ajustado,
+	case when ranking=1 then child_oferta_instantanea else parent_oferta_instantanea end as oferta_instantanea,
+	case when ranking=1 then child_oferta_tradein else parent_oferta_tradein end as oferta_tradein,
+	case when ranking=1 then null else regla_ganadora_algoritmo end as regla_ganadora_algoritmo,
+	case when ranking=1 then child_fecha_registro else parent.fecha_registro end as fecha_oferta,
+	case when ranking=1 then child_fecha_hora_registro else parent.fecha_hora_registro end as fecha_hora_oferta,
+	child.child_id_cotizador,
+	cotizado_por,
+	null::int as flag_check_pricing,
+	null::text as resultado_check_pricing,
+	null::date as fecha_inspeccion_agendada,
+	null::text as check_pricing_realizado_por,
+	null::int as oferta_instantanea_original,
+	null::text as sku_original
+	from parent
+	left join child on parent.id_cotizador = child.parent_id_cotizador)
+	select * from regs_peru where not (status_oferta = 'pending offers expirated' and child_id_cotizador is null)
+		),
+	
+fecha_pais as ( 
+select * from
+(select distinct fecha_registro as fecha from base_regs) a
+left join 
+(select distinct pais_corto as pais from base_regs) b
+on 1=1
+),
+
+a as (select 
+	fecha_registro
+	,pais_corto
+	,count(distinct lead_id) as registers_nc
+	,count(distinct lead_id) - count(distinct case when flag_successful_register=1 then lead_id end) as not_successful_nc
+	,count(distinct case when flag_successful_register=1 then lead_id end) as successful_registers_nc
+	,count(distinct case when flag_no_cotizable=1 then lead_id end) as no_cotizables_nc
+	from base_regs where pais_corto not like 'AR'
+	group by 1,2),
+	
+	
+b as (select 
+	fecha_oferta
+	,pais_corto
+	,count(distinct case when flag_con_oferta=1 then lead_id end) as qoutations_nc
+	,count(distinct case when flag_con_oferta=1 and tipo_oferta='Automatica' then lead_id end) as auto_quotations_nc
+	,count(distinct case when flag_con_oferta=1 and tipo_oferta='Manual' then lead_id end) as manual_quotations_nc
+	from base_regs where pais_corto not like 'AR'
+	group by 1,2)
+	
+	
+select 
+fecha_pais.fecha,
+fecha_pais.pais,
+case when a.registers_nc is null then 0 else a.registers_nc end,
+case when a.not_successful_nc is null then 0 else a.not_successful_nc end,
+case when a.successful_registers_nc is null then 0 else a.successful_registers_nc end,
+case when a.no_cotizables_nc is null then 0 else a.no_cotizables_nc end,
+case when b.qoutations_nc is null then 0 else b.qoutations_nc end,
+case when b.auto_quotations_nc is null then 0 else b.auto_quotations_nc end,
+case when b.manual_quotations_nc is null then 0 else b.manual_quotations_nc end
+from fecha_pais
+left join a
+on fecha_pais.fecha=a.fecha_registro
+and fecha_pais.pais=a.pais_corto
+left join b
+on fecha_pais.fecha=b.fecha_oferta 
+and fecha_pais.pais=b.pais_corto
+order by fecha desc
+	
+	
